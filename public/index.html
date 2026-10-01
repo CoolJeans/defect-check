@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>실시간 대용량 불량 선별 시스템</title>
+  <title>실시간 불량 선별 시스템</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="/socket.io/socket.io.js"></script>
-  <!-- 안정적인 ZXing 글로벌 라이브러리 -->
   <script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
   <style>
     .matched-row {
@@ -14,76 +13,119 @@
       color: #9ca3af;
       text-decoration: line-through;
     }
-    @keyframes popIn {
-      0% { transform: scale(0.85); opacity: 0; }
+    /* 고시인성 HUD 플래시 애니메이션 */
+    @keyframes flashFeedback {
+      0% { transform: scale(0.97); opacity: 0.8; }
+      50% { transform: scale(1.02); opacity: 1; }
       100% { transform: scale(1); opacity: 1; }
     }
-    .modal-pop {
-      animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    .hud-active {
+      animation: flashFeedback 0.2s ease-out;
     }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 p-3 md:p-6">
-  <div class="max-w-6xl mx-auto space-y-5">
+  <div class="max-w-6xl mx-auto space-y-4">
 
-    <!-- 상단 헤더 -->
-    <header class="bg-white p-4 md:p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-3">
+    <!-- 상단 헤더 & 다운로드 메뉴 -->
+    <header class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-3">
       <div class="flex items-center gap-3">
-        <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" id="socketStatusDot"></div>
+        <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
         <div>
-          <h1 class="text-xl md:text-2xl font-bold text-slate-900">📦 실시간 불량 선별 시스템</h1>
-          <p class="text-xs md:text-sm text-slate-500">DMC · QR · 1D 바코드 통합 스캔 · SQLite 영구 DB</p>
+          <h1 class="text-xl md:text-2xl font-bold text-slate-900">📦 실시간 불량 선별 워크스페이스</h1>
+          <p class="text-xs text-slate-500">초고속 바코드/DMC 스캔 · 자동 이력 보관 · 무정지 HUD 시인성</p>
         </div>
-        <!-- DB 원본 다운로드 버튼 -->
-<a href="/api/download-db" class="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1">
-  📦 DB 파일 받기
-</a>
-
-<!-- 엑셀/CSV 다운로드 버튼 -->
-<a href="/api/download-csv" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1">
-  📊 엑셀 다운로드
-</a>
       </div>
-      <div class="flex items-center gap-2">
-        <div class="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
-          <label for="workerName" class="text-xs font-semibold text-slate-600 whitespace-nowrap">작업자:</label>
-          <input type="text" id="workerName" value="작업자1" class="border border-slate-300 rounded px-2 py-1 text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none w-24">
+      <div class="flex flex-wrap items-center gap-2">
+        <a href="/api/download-defects-csv" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1">
+          📊 불량결과 CSV
+        </a>
+        <a href="/api/download-history-csv" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition flex items-center gap-1">
+          📜 스캔이력 CSV
+        </a>
+        <a href="/api/download-db" class="bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">
+          💾 DB백업
+        </a>
+        <div class="flex items-center gap-1 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
+          <label for="workerName" class="text-xs font-semibold text-slate-600">작업자:</label>
+          <input type="text" id="workerName" value="작업자1" class="border border-slate-300 rounded px-1.5 py-0.5 text-xs font-medium w-20 outline-none">
         </div>
       </div>
     </header>
 
-    <!-- 통계 요약 대시보드 -->
+    <!-- 대시보드 통계 요약 -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
         <p class="text-xs text-slate-500 font-medium">전체 불량 대상</p>
-        <p class="text-xl md:text-2xl font-bold text-slate-800 mt-0.5" id="totalCount">0 <span class="text-xs font-normal text-slate-400">건</span></p>
+        <p class="text-xl font-bold text-slate-800 mt-0.5" id="totalCount">0 <span class="text-xs font-normal text-slate-400">건</span></p>
       </div>
       <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
         <p class="text-xs text-slate-500 font-medium">선별 완료</p>
-        <p class="text-xl md:text-2xl font-bold text-emerald-600 mt-0.5" id="completedCount">0 <span class="text-xs font-normal text-slate-400">건</span></p>
+        <p class="text-xl font-bold text-emerald-600 mt-0.5" id="completedCount">0 <span class="text-xs font-normal text-slate-400">건</span></p>
       </div>
       <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
         <p class="text-xs text-slate-500 font-medium">미선별 잔여</p>
-        <p class="text-xl md:text-2xl font-bold text-rose-500 mt-0.5" id="remainingCount">0 <span class="text-xs font-normal text-slate-400">건</span></p>
+        <p class="text-xl font-bold text-rose-500 mt-0.5" id="remainingCount">0 <span class="text-xs font-normal text-slate-400">건</span></p>
       </div>
       <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
         <p class="text-xs text-slate-500 font-medium">진행률</p>
-        <p class="text-xl md:text-2xl font-bold text-blue-600 mt-0.5" id="progressRate">0%</p>
+        <p class="text-xl font-bold text-blue-600 mt-0.5" id="progressRate">0%</p>
       </div>
+    </div>
+
+    <!-- 🚨 [시인성 극대화 HUD 판정 상태창] 별도 확인 클릭 없이 한눈에 파악 -->
+    <div id="hudBanner" class="p-4 rounded-xl border-2 transition-all duration-300 shadow-md flex items-center justify-between bg-slate-800 border-slate-700 text-white">
+      <div class="flex items-center gap-3">
+        <div id="hudIcon" class="text-2xl font-black w-10 h-10 rounded-full flex items-center justify-center bg-slate-700">🔍</div>
+        <div>
+          <div id="hudTitle" class="text-sm font-bold tracking-wide">스캔 대기 중...</div>
+          <div id="hudDesc" class="text-xs text-slate-300 font-mono mt-0.5">카메라로 바코드/QR/DMC를 비추거나 제품 ID를 입력하세요.</div>
+        </div>
+      </div>
+      <div id="hudCode" class="text-lg md:text-xl font-extrabold font-mono tracking-wider text-right">READY</div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-      <!-- 왼쪽 영역: 카메라 & 입력 & 파싱 -->
-      <div class="space-y-5 lg:col-span-1">
+      <!-- 좌측 영역: 카메라 + 포맷 선택 + ID 입력 -->
+      <div class="space-y-4 lg:col-span-1">
 
-        <!-- 1. 카메라 스캐너 -->
+        <!-- 카메라 스캔 카드 -->
         <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
           <div class="flex justify-between items-center">
-            <h2 class="font-bold text-slate-800 text-sm md:text-base">📷 카메라 바코드/QR/DMC 스캔</h2>
-            <button id="toggleScannerBtn" onclick="toggleScanner()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm">
+            <h2 class="font-bold text-slate-800 text-sm md:text-base">📷 카메라 스캐너</h2>
+            <button id="toggleScannerBtn" onclick="toggleScanner()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition">
               카메라 시작
             </button>
+          </div>
+
+          <!-- ⚡ [신규] 스캔할 코드 종류 선택 (속도 개선 목적) -->
+          <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1.5">
+            <div class="flex justify-between items-center">
+              <span class="text-[11px] font-bold text-slate-700">스캔 코드 종류 선택 (필요한 것만 체크 시 속도↑)</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5 text-xs">
+              <label class="flex items-center gap-1 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 hover:bg-blue-50">
+                <input type="checkbox" id="fmt_DMC" checked onchange="onFormatConfigChange()" class="rounded text-blue-600">
+                <span class="font-bold text-slate-700 text-[11px]">DMC</span>
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 hover:bg-blue-50">
+                <input type="checkbox" id="fmt_QR" checked onchange="onFormatConfigChange()" class="rounded text-blue-600">
+                <span class="font-bold text-slate-700 text-[11px]">QR Code</span>
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 hover:bg-blue-50">
+                <input type="checkbox" id="fmt_128" checked onchange="onFormatConfigChange()" class="rounded text-blue-600">
+                <span class="font-bold text-slate-700 text-[11px]">Code 128</span>
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 hover:bg-blue-50">
+                <input type="checkbox" id="fmt_39" onchange="onFormatConfigChange()" class="rounded text-blue-600">
+                <span class="text-slate-600 text-[11px]">Code 39</span>
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200 hover:bg-blue-50 col-span-2">
+                <input type="checkbox" id="fmt_EAN" onchange="onFormatConfigChange()" class="rounded text-blue-600">
+                <span class="text-slate-600 text-[11px]">EAN-13 (유통바코드)</span>
+              </label>
+            </div>
           </div>
 
           <!-- 카메라 디바이스 선택 -->
@@ -94,158 +136,139 @@
           <!-- 비디오 뷰파인더 -->
           <div id="videoContainer" class="relative hidden bg-black rounded-lg overflow-hidden border border-slate-300 aspect-[4/3] flex items-center justify-center">
             <video id="videoElement" class="w-full h-full object-cover" playsinline autoplay muted></video>
-            <!-- 1D 바코드 조준 레이저선 -->
+            <!-- 1D 레이저선 -->
             <div class="absolute inset-x-6 top-1/2 -translate-y-1/2 h-0.5 bg-red-500/80 shadow-[0_0_8px_rgba(239,68,68,0.9)] pointer-events-none"></div>
-            <!-- 2D DMC/QR 영역 가이드 -->
+            <!-- 2D 사각 영역 가이드 -->
             <div class="absolute inset-8 border-2 border-emerald-400/50 border-dashed rounded-lg pointer-events-none"></div>
-            <!-- 실시간 인식 상태 뱃지 -->
-            <div class="absolute top-2 left-2 text-[10px] bg-black/70 text-emerald-400 px-2 py-0.5 rounded font-mono" id="scanEngineStatus">
-              준비됨
-            </div>
-            <div class="absolute bottom-2 text-[10px] text-white/90 bg-black/60 px-2.5 py-0.5 rounded-full pointer-events-none">
-              1D 바코드는 붉은 선, DMC/QR은 사각 박스에 맞춤
-            </div>
           </div>
 
-          <!-- 파싱 규칙 설정 -->
-          <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2 text-xs">
+          <!-- 바코드 문자열 파싱 규칙 -->
+          <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1.5 text-xs">
             <div class="flex items-center justify-between font-semibold text-slate-700">
-              <span>바코드 파싱 규칙</span>
+              <span>바코드 문자열 일부 추출</span>
               <label class="flex items-center gap-1 cursor-pointer">
                 <input type="checkbox" id="useSubstring" onchange="toggleSubstringFields()" class="rounded text-blue-600">
-                <span>일부만 추출</span>
+                <span>활성화</span>
               </label>
             </div>
-            
             <div id="substringControls" class="grid grid-cols-2 gap-2 hidden pt-1">
               <div>
-                <label class="block text-slate-500 text-[11px] mb-0.5">시작 위치 (1부터)</label>
+                <label class="block text-slate-500 text-[10px]">시작 위치 (1부터)</label>
                 <input type="number" id="subStart" value="1" min="1" class="w-full border border-slate-300 rounded px-2 py-1 text-xs">
               </div>
               <div>
-                <label class="block text-slate-500 text-[11px] mb-0.5">추출 길이 (글자수)</label>
+                <label class="block text-slate-500 text-[10px]">추출 길이</label>
                 <input type="number" id="subLength" value="8" min="1" class="w-full border border-slate-300 rounded px-2 py-1 text-xs">
               </div>
             </div>
           </div>
-
-          <!-- 최근 스캔 결과 -->
-          <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs space-y-1">
-            <div class="text-slate-500 truncate">최근 원본: <span id="lastRawScan" class="font-mono text-slate-800 font-bold">-</span></div>
-            <div class="text-slate-500 truncate">추출 ID: <span id="lastParsedScan" class="font-mono text-blue-600 font-bold">-</span></div>
-          </div>
         </div>
 
-        <!-- 2. 제품 ID 직접 입력 -->
-        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
-          <h2 class="font-bold text-slate-800 text-sm md:text-base">🔍 제품 ID 직접 입력</h2>
+        <!-- 제품 ID 직접 입력 -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
+          <h2 class="font-bold text-slate-800 text-sm">🔍 제품 ID 직접 입력</h2>
           <div class="flex gap-2">
-            <input type="text" id="manualIdInput" placeholder="제품 ID 입력 후 Enter" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
-            <button onclick="handleManualSubmit()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition">확인</button>
+            <input type="text" id="manualIdInput" placeholder="제품 ID 입력 후 Enter" class="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500 outline-none">
+            <button onclick="handleManualSubmit()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition">확인</button>
           </div>
         </div>
 
-        <!-- 3. 대용량 ID 붙여넣기 등록 -->
-        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+        <!-- 불량 ID 대량 등록 (붙여넣기) -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
           <div class="flex justify-between items-center">
-            <h2 class="font-bold text-slate-800 text-sm md:text-base">📋 불량 ID 대량 등록</h2>
-            <span id="uploadProgress" class="text-xs text-blue-600 font-bold hidden">등록 처리 중...</span>
+            <h2 class="font-bold text-slate-800 text-sm">📋 불량 대상 ID 등록</h2>
+            <span id="uploadProgress" class="text-xs text-blue-600 font-bold hidden">등록 중...</span>
           </div>
-          <textarea id="bulkInput" rows="3" placeholder="엑셀 복사-붙여넣기 (3만건 일괄 등록 지원)" class="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+          <textarea id="bulkInput" rows="3" placeholder="엑셀 복사-붙여넣기 (3만건 일괄 등록 가능)" class="w-full border border-slate-300 rounded-lg p-2 text-xs font-mono outline-none"></textarea>
           <div class="flex gap-2">
-            <button id="btnBulkUpload" onclick="uploadBulkData()" class="w-full bg-slate-800 hover:bg-slate-900 text-white py-1.5 rounded-lg text-xs font-medium transition shadow-sm">
-              고속 일괄 등록
-            </button>
-            <button onclick="clearAllData()" class="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-medium transition border border-rose-200 whitespace-nowrap">초기화</button>
+            <button id="btnBulkUpload" onclick="uploadBulkData()" class="w-full bg-slate-800 hover:bg-slate-900 text-white py-1.5 rounded-lg text-xs font-semibold transition">일괄 등록</button>
+            <button onclick="clearAllData()" class="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-semibold border border-rose-200 whitespace-nowrap">초기화</button>
           </div>
         </div>
 
       </div>
 
-      <!-- 오른쪽 영역: 불량 목록 & 작업 로그 -->
-      <div class="space-y-5 lg:col-span-2">
-
-        <!-- 불량 리스트 테이블 (페이징 & 검색) -->
-        <div class="bg-white p-4 md:p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
-          <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
-            <div class="flex items-center gap-2">
-              <h2 class="font-bold text-slate-800 text-sm md:text-base">불량 대상 관리 리스트</h2>
-              <span id="listTotalBadge" class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">0건</span>
+      <!-- 우측 영역: 불량 관리 리스트 vs 전체 스캔 이력 탭 테이블 -->
+      <div class="space-y-4 lg:col-span-2">
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+          
+          <!-- 탭 선택 메뉴 -->
+          <div class="flex justify-between items-center border-b border-slate-200 pb-2.5">
+            <div class="flex gap-2">
+              <button id="tabDefectsBtn" onclick="switchTab('defects')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white shadow-sm transition">
+                📦 불량 대상 관리 리스트
+              </button>
+              <button id="tabHistoryBtn" onclick="switchTab('history')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+                📜 전체 스캔 이력 (<span id="historyCountBadge">0</span>)
+              </button>
             </div>
             
-            <div class="flex items-center gap-3">
+            <!-- 필터/검색 (불량 탭 전용) -->
+            <div id="defectsControls" class="flex items-center gap-2">
               <select id="filterMode" onchange="fetchTableData(1)" class="border border-slate-300 rounded px-2 py-1 text-xs outline-none bg-white">
-                <option value="all">전체 보기</option>
-                <option value="waiting">미선별(대기)만</option>
-                <option value="completed">선별 완료만</option>
+                <option value="all">전체</option>
+                <option value="waiting">대기만</option>
+                <option value="completed">선별만</option>
               </select>
-              <input type="text" id="searchInput" oninput="debounceSearch()" placeholder="ID 검색..." class="border border-slate-300 rounded px-2 py-1 text-xs w-32 outline-none focus:ring-1 focus:ring-blue-500">
+              <input type="text" id="searchInput" oninput="debounceSearch()" placeholder="ID 검색..." class="border border-slate-300 rounded px-2 py-1 text-xs w-28 outline-none">
             </div>
           </div>
 
-          <div class="overflow-x-auto max-h-[380px] overflow-y-auto border border-slate-200 rounded-lg">
-            <table class="w-full text-left text-xs">
-              <thead class="bg-slate-50 text-slate-600 sticky top-0 border-b border-slate-200">
+          <!-- 테이블 A: 불량 대상 리스트 -->
+          <div id="defectsTableWrapper" class="overflow-x-auto max-h-[460px] overflow-y-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-xs font-mono">
+              <thead class="bg-slate-50 text-slate-600 sticky top-0 border-b border-slate-200 font-sans">
                 <tr>
-                  <th class="p-2.5 w-14 text-center">상태</th>
+                  <th class="p-2.5 w-16 text-center">상태</th>
                   <th class="p-2.5">제품 ID</th>
                   <th class="p-2.5">작업자</th>
                   <th class="p-2.5">선별 시각</th>
                   <th class="p-2.5 text-center w-16">방식</th>
                 </tr>
               </thead>
-              <tbody id="defectTableBody" class="divide-y divide-slate-100 font-mono">
-                <tr>
-                  <td colspan="5" class="p-6 text-center text-slate-400 font-sans">등록된 불량 ID가 없습니다.</td>
-                </tr>
+              <tbody id="defectTableBody" class="divide-y divide-slate-100">
+                <tr><td colspan="5" class="p-6 text-center text-slate-400 font-sans">등록된 불량 ID가 없습니다.</td></tr>
               </tbody>
             </table>
           </div>
 
+          <!-- 테이블 B: 전체 스캔 이력 (정상/불량/중복 전량 기록) -->
+          <div id="historyTableWrapper" class="hidden overflow-x-auto max-h-[460px] overflow-y-auto border border-slate-200 rounded-lg">
+            <table class="w-full text-left text-xs font-mono">
+              <thead class="bg-slate-50 text-slate-600 sticky top-0 border-b border-slate-200 font-sans">
+                <tr>
+                  <th class="p-2.5 w-14 text-center">순번</th>
+                  <th class="p-2.5">스캔 제품 ID</th>
+                  <th class="p-2.5 text-center w-28">판정 결과</th>
+                  <th class="p-2.5">작업자</th>
+                  <th class="p-2.5">스캔 시각</th>
+                  <th class="p-2.5 text-center w-16">방식</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody" class="divide-y divide-slate-100">
+                <tr><td colspan="6" class="p-6 text-center text-slate-400 font-sans">스캔 이력이 없습니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 페이징 컨트롤 -->
           <div class="flex justify-between items-center text-xs text-slate-500 pt-1">
             <span id="pageInfo">1 / 1 페이지</span>
             <div class="flex gap-1">
-              <button onclick="changePage(-1)" class="px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 font-medium">이전</button>
-              <button onclick="changePage(1)" class="px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 font-medium">다음</button>
+              <button onclick="changePage(-1)" class="px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50">이전</button>
+              <button onclick="changePage(1)" class="px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50">다음</button>
             </div>
           </div>
+
         </div>
-
-        <!-- 실시간 작업 로그 피드 -->
-        <div class="bg-white p-4 md:p-5 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
-          <h2 class="font-bold text-slate-800 text-sm md:text-base">🕒 실시간 작업 로그</h2>
-          <div id="logContainer" class="bg-slate-50 p-3 rounded-lg border border-slate-200 h-40 overflow-y-auto space-y-1.5 text-xs font-mono">
-            <div class="text-slate-400 font-sans">서버에 연결되었습니다.</div>
-          </div>
-        </div>
-
       </div>
 
-    </div>
-  </div>
-
-  <!-- 🚨 [선별 완료 시 팝업 알람창] -->
-  <div id="alertModal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
-    <div class="bg-white rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl modal-pop border-4 border-emerald-500 space-y-4">
-      <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl font-bold">✓</div>
-      <div>
-        <h3 class="text-xl font-extrabold text-slate-900">불량품 선별 완료!</h3>
-        <p class="text-xs text-slate-500 mt-1">대상 목록에서 정상 선별 처리되었습니다.</p>
-      </div>
-      <div class="bg-slate-100 p-3.5 rounded-xl text-left text-xs space-y-1 font-mono">
-        <div><span class="text-slate-500">제품 ID :</span> <span id="modalId" class="text-base font-bold text-emerald-600"></span></div>
-        <div><span class="text-slate-500">작업자 :</span> <span id="modalWorker" class="font-semibold text-slate-800"></span></div>
-        <div><span class="text-slate-500">시　각 :</span> <span id="modalTime" class="text-slate-700"></span></div>
-      </div>
-      <button onclick="closeAlertModal()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-sm transition shadow-lg shadow-emerald-600/30">
-        확인 (Enter / Space)
-      </button>
     </div>
   </div>
 
   <script>
-    // 1. Socket.io 실시간 연결
     const socket = io();
+    let currentTab = 'defects'; // 'defects' or 'history'
     let currentPage = 1;
     let totalPages = 1;
     let searchTimer = null;
@@ -254,12 +277,12 @@
     let selectedDeviceId = null;
     let isScanning = false;
     let lastScanTime = 0;
-    const SCAN_COOLDOWN_MS = 700;
+    const SCAN_COOLDOWN_MS = 600;
 
-    // 2. 비프음 알림
+    // 사운드 피드백
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     let audioCtx = null;
-    function playBeep(type = 'success') {
+    function playBeep(type) {
       try {
         if (!audioCtx) audioCtx = new AudioCtx();
         if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -267,23 +290,64 @@
         const gain = audioCtx.createGain();
         osc.connect(gain);
         gain.connect(audioCtx.destination);
+
         if (type === 'success') {
+          // 불량 발견: 고음 청아한 띵 (880Hz)
           osc.frequency.setValueAtTime(880, audioCtx.currentTime);
           gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
           osc.start(); osc.stop(audioCtx.currentTime + 0.15);
         } else if (type === 'duplicate') {
+          // 중복: 짧은 더블 비프
           osc.frequency.setValueAtTime(440, audioCtx.currentTime);
-          gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-          osc.start(); osc.stop(audioCtx.currentTime + 0.25);
-        } else {
-          osc.frequency.setValueAtTime(250, audioCtx.currentTime);
-          gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
           osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+        } else {
+          // 정상 품목: 가벼운 저음 피드백 (350Hz)
+          osc.frequency.setValueAtTime(350, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+          osc.start(); osc.stop(audioCtx.currentTime + 0.08);
         }
       } catch (e) {}
     }
 
-    // 3. Socket 수신 처리
+    // 🚨 [고시인성 HUD 상태창 갱신 함수] 클릭 없이 화면만 힐끗 보고 즉시 확인
+    function showHudFeedback(status, id, worker, time) {
+      const banner = document.getElementById('hudBanner');
+      const icon = document.getElementById('hudIcon');
+      const title = document.getElementById('hudTitle');
+      const desc = document.getElementById('hudDesc');
+      const code = document.getElementById('hudCode');
+
+      banner.classList.remove('hud-active');
+      void banner.offsetWidth; // 재실행 트리거
+      banner.classList.add('hud-active');
+      code.textContent = id;
+
+      if (status === 'SUCCESS') {
+        // 불량품 선별 완료: 큼직한 초록색
+        banner.className = 'p-4 rounded-xl border-2 transition-all shadow-lg flex items-center justify-between bg-emerald-600 border-emerald-400 text-white';
+        icon.className = 'text-2xl font-black w-10 h-10 rounded-full flex items-center justify-center bg-white text-emerald-600';
+        icon.textContent = '✓';
+        title.textContent = '🎯 불량품 선별 완료!';
+        desc.textContent = `작업자: ${worker} | 선별시각: ${time}`;
+      } else if (status === 'ALREADY_MATCHED') {
+        // 이미 선별된 제품: 주황색
+        banner.className = 'p-4 rounded-xl border-2 transition-all shadow-lg flex items-center justify-between bg-amber-500 border-amber-300 text-white';
+        icon.className = 'text-2xl font-black w-10 h-10 rounded-full flex items-center justify-center bg-white text-amber-600';
+        icon.textContent = '⚠️';
+        title.textContent = '이미 선별 완료된 제품입니다 (중복)';
+        desc.textContent = `이전 처리자: ${worker} (${time})`;
+      } else {
+        // 정상 제품: 부드러운 다크블루
+        banner.className = 'p-4 rounded-xl border-2 transition-all shadow-md flex items-center justify-between bg-blue-700 border-blue-500 text-white';
+        icon.className = 'text-2xl font-black w-10 h-10 rounded-full flex items-center justify-center bg-white text-blue-700';
+        icon.textContent = '⚪';
+        title.textContent = '정상 제품 (불량 목록에 없음)';
+        desc.textContent = `확인시각: ${time || new Date().toLocaleTimeString('ko-KR')}`;
+      }
+    }
+
+    // Socket 이벤트 수신
     socket.on('stats_updated', ({ total, completed }) => {
       const remaining = total - completed;
       const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -294,89 +358,211 @@
     });
 
     socket.on('refresh_table', () => {
-      fetchTableData(currentPage);
+      if (currentTab === 'defects') fetchTableData(currentPage);
     });
 
-    socket.on('broadcast_log', (log) => {
-      const color = log.type === 'success' ? 'text-emerald-600 font-bold' : (log.type === 'warn' ? 'text-rose-600' : 'text-blue-600');
-      addLog(log.message, color, log.time);
+    socket.on('refresh_history', () => {
+      fetchHistoryCount();
+      if (currentTab === 'history') fetchHistoryData(currentPage);
     });
 
     socket.on('match_result', (res) => {
       if (res.status === 'SUCCESS') {
         playBeep('success');
-        showAlertModal(res.id, res.worker, res.matchedAt);
+        showHudFeedback('SUCCESS', res.id, res.worker, res.matchedAt);
       } else if (res.status === 'ALREADY_MATCHED') {
         playBeep('duplicate');
-        addLog(`⚠️ [${res.id}] 이미 선별 완료된 제품 (${res.worker}님이 ${res.matchedAt}에 처리)`, 'text-amber-600');
+        showHudFeedback('ALREADY_MATCHED', res.id, res.worker, res.matchedAt);
       } else {
-        playBeep('error');
-        addLog(`❌ [${res.id}] 불량 대상 DB에 없음`, 'text-rose-600');
+        playBeep('normal');
+        showHudFeedback('NOT_FOUND', res.id, res.worker, res.matchedAt);
       }
     });
 
-    // 4. 대용량 고속 HTTP 등록
-    async function uploadBulkData() {
-      const text = document.getElementById('bulkInput').value;
-      if (!text.trim()) return alert('등록할 ID를 입력하세요.');
+    // ⚡ [코드 종류 선택 설정 기반 ZXing 엔진 구성]
+    function getSelectedBarcodeFormats() {
+      const formats = [];
+      if (document.getElementById('fmt_DMC').checked) formats.push(ZXing.BarcodeFormat.DATA_MATRIX);
+      if (document.getElementById('fmt_QR').checked) formats.push(ZXing.BarcodeFormat.QR_CODE);
+      if (document.getElementById('fmt_128').checked) formats.push(ZXing.BarcodeFormat.CODE_128);
+      if (document.getElementById('fmt_39').checked) formats.push(ZXing.BarcodeFormat.CODE_39);
+      if (document.getElementById('fmt_EAN').checked) formats.push(ZXing.BarcodeFormat.EAN_13);
 
-      const list = text.split(/[\n,\t\r]+/).map(s => s.trim()).filter(Boolean);
-      if (list.length === 0) return;
+      if (formats.length === 0) {
+        // 최소 1개는 기본 선택
+        formats.push(ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.CODE_128);
+        document.getElementById('fmt_DMC').checked = true;
+      }
+      return formats;
+    }
 
-      const btn = document.getElementById('btnBulkUpload');
-      const progress = document.getElementById('uploadProgress');
-      btn.disabled = true;
-      progress.classList.remove('hidden');
-      progress.textContent = `등록 처리 중... (${list.length.toLocaleString()}개)`;
+    function createConfiguredReader() {
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, getSelectedBarcodeFormats());
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      return new ZXing.BrowserMultiFormatReader(hints, 80);
+    }
 
-      try {
-        const res = await fetch('/api/upload-bulk', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ list })
-        });
-        const data = await res.json();
-        if (data.success) {
-          document.getElementById('bulkInput').value = '';
-          fetchTableData(1);
-        } else {
-          alert('등록 실패: ' + data.error);
-        }
-      } catch (err) {
-        alert('업로드 오류: ' + err.message);
-      } finally {
-        btn.disabled = false;
-        progress.classList.add('hidden');
+    function onFormatConfigChange() {
+      if (isScanning && codeReader) {
+        codeReader.reset();
+        codeReader = createConfiguredReader();
+        startDecoding();
       }
     }
 
-    // 5. 페이징 기반 테이블 데이터 조회
+    // 바코드 파싱
+    function parseBarcodeData(rawText) {
+      const useSub = document.getElementById('useSubstring').checked;
+      if (!useSub) return rawText.trim();
+      const startIdx = parseInt(document.getElementById('subStart').value, 10) - 1;
+      const length = parseInt(document.getElementById('subLength').value, 10);
+      if (isNaN(startIdx) || isNaN(length) || startIdx < 0 || length <= 0) return rawText.trim();
+      return rawText.substr(startIdx, length).trim();
+    }
+
+    function sendMatchRequest(rawId, method) {
+      const cleanId = rawId.trim();
+      if (!cleanId) return;
+      const worker = document.getElementById('workerName').value.trim() || '익명';
+      socket.emit('match_defect', { targetId: cleanId, worker, method });
+    }
+
+    function handleManualSubmit() {
+      const input = document.getElementById('manualIdInput');
+      sendMatchRequest(input.value, '수기');
+      input.value = '';
+      input.focus();
+    }
+    document.getElementById('manualIdInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleManualSubmit();
+    });
+
+    // 카메라 스캐너 시작/종료
+    function startDecoding() {
+      const videoEl = document.getElementById('videoElement');
+      codeReader.decodeFromVideoDevice(selectedDeviceId, videoEl, (result, err) => {
+        if (result) {
+          const now = Date.now();
+          if (now - lastScanTime < SCAN_COOLDOWN_MS) return;
+          lastScanTime = now;
+
+          const rawText = result.getText();
+          const parsedId = parseBarcodeData(rawText);
+          sendMatchRequest(parsedId, '카메라');
+        }
+      });
+    }
+
+    async function toggleScanner() {
+      const btn = document.getElementById('toggleScannerBtn');
+      const container = document.getElementById('videoContainer');
+
+      if (!isScanning) {
+        btn.textContent = '카메라 켜는 중...';
+        btn.disabled = true;
+
+        try {
+          if (!codeReader) codeReader = createConfiguredReader();
+          container.classList.remove('hidden');
+
+          const videoDevices = await codeReader.listVideoInputDevices();
+          const camSelect = document.getElementById('camSelect');
+          camSelect.innerHTML = '';
+
+          if (videoDevices && videoDevices.length > 0) {
+            videoDevices.forEach((d, i) => {
+              const opt = document.createElement('option');
+              opt.value = d.deviceId;
+              opt.text = d.label || `카메라 ${i + 1}`;
+              camSelect.appendChild(opt);
+            });
+            const backCam = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear'));
+            selectedDeviceId = backCam ? backCam.deviceId : videoDevices[0].deviceId;
+            camSelect.value = selectedDeviceId;
+            if (videoDevices.length > 1) document.getElementById('camSelectContainer').classList.remove('hidden');
+          }
+
+          startDecoding();
+          isScanning = true;
+          btn.textContent = '카메라 끄기';
+          btn.className = 'bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition';
+        } catch (err) {
+          alert('카메라 실행 실패: 권한 허용 여부를 확인하세요.');
+          stopScannerUI();
+        } finally {
+          btn.disabled = false;
+        }
+      } else {
+        stopScannerUI();
+      }
+    }
+
+    function stopScannerUI() {
+      if (codeReader) codeReader.reset();
+      document.getElementById('toggleScannerBtn').textContent = '카메라 시작';
+      document.getElementById('toggleScannerBtn').className = 'bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition';
+      document.getElementById('videoContainer').classList.add('hidden');
+      isScanning = false;
+    }
+
+    async function changeCamera() {
+      if (!isScanning) return;
+      selectedDeviceId = document.getElementById('camSelect').value;
+      if (codeReader) codeReader.reset();
+      startDecoding();
+    }
+
+    function toggleSubstringFields() {
+      document.getElementById('substringControls').classList.toggle('hidden', !document.getElementById('useSubstring').checked);
+    }
+
+    // 탭 전환 (불량 리스트 vs 스캔 이력)
+    function switchTab(tab) {
+      currentTab = tab;
+      const tabDefectsBtn = document.getElementById('tabDefectsBtn');
+      const tabHistoryBtn = document.getElementById('tabHistoryBtn');
+      const defectsControls = document.getElementById('defectsControls');
+      const defectsWrapper = document.getElementById('defectsTableWrapper');
+      const historyWrapper = document.getElementById('historyTableWrapper');
+
+      if (tab === 'defects') {
+        tabDefectsBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white shadow-sm transition';
+        tabHistoryBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition';
+        defectsControls.classList.remove('hidden');
+        defectsWrapper.classList.remove('hidden');
+        historyWrapper.classList.add('hidden');
+        fetchTableData(1);
+      } else {
+        tabHistoryBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white shadow-sm transition';
+        tabDefectsBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition';
+        defectsControls.classList.add('hidden');
+        defectsWrapper.classList.add('hidden');
+        historyWrapper.classList.remove('hidden');
+        fetchHistoryData(1);
+      }
+    }
+
+    // 불량 리스트 조회
     async function fetchTableData(page = 1) {
       currentPage = page;
       const search = document.getElementById('searchInput').value;
       const filter = document.getElementById('filterMode').value;
-
       try {
         const res = await fetch(`/api/defects?page=${currentPage}&limit=100&search=${encodeURIComponent(search)}&filter=${filter}`);
         const data = await res.json();
-
         totalPages = Math.ceil(data.total / 100) || 1;
         document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages} 페이지 (총 ${data.total.toLocaleString()}건)`;
-        document.getElementById('listTotalBadge').textContent = `${data.total.toLocaleString()}건`;
-
-        renderTable(data.items);
-      } catch (e) {
-        console.error('테이블 조회 오류:', e);
-      }
+        renderDefectsTable(data.items);
+      } catch (e) {}
     }
 
-    function renderTable(items) {
+    function renderDefectsTable(items) {
       const tbody = document.getElementById('defectTableBody');
       if (!items || items.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 font-sans">조건에 일치하는 데이터가 없습니다.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 font-sans">등록된 불량 ID가 없습니다.</td></tr>`;
         return;
       }
-
       let html = '';
       items.forEach(item => {
         const isMatched = item.matched === 1;
@@ -384,7 +570,6 @@
         const badge = isMatched 
           ? `<span class="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold font-sans">완료</span>` 
           : `<span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-sans">대기</span>`;
-
         html += `
           <tr class="${rowClass} transition">
             <td class="p-2.5 text-center">${badge}</td>
@@ -398,10 +583,57 @@
       tbody.innerHTML = html;
     }
 
+    // 스캔 이력 조회
+    async function fetchHistoryData(page = 1) {
+      currentPage = page;
+      try {
+        const res = await fetch(`/api/history?page=${currentPage}&limit=50`);
+        const data = await res.json();
+        totalPages = Math.ceil(data.total / 50) || 1;
+        document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages} 페이지 (총 이력 ${data.total.toLocaleString()}건)`;
+        renderHistoryTable(data.items);
+      } catch (e) {}
+    }
+
+    async function fetchHistoryCount() {
+      try {
+        const res = await fetch('/api/history?page=1&limit=1');
+        const data = await res.json();
+        document.getElementById('historyCountBadge').textContent = data.total.toLocaleString();
+      } catch (e) {}
+    }
+
+    function renderHistoryTable(items) {
+      const tbody = document.getElementById('historyTableBody');
+      if (!items || items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-slate-400 font-sans">스캔 이력이 없습니다.</td></tr>`;
+        return;
+      }
+      let html = '';
+      items.forEach(item => {
+        let badgeColor = 'bg-blue-100 text-blue-700';
+        if (item.result_status.includes('완료')) badgeColor = 'bg-emerald-100 text-emerald-700 font-bold';
+        else if (item.result_status.includes('중복')) badgeColor = 'bg-amber-100 text-amber-700';
+
+        html += `
+          <tr class="hover:bg-slate-50 transition">
+            <td class="p-2.5 text-center text-slate-400 font-sans text-[11px]">${item.seq}</td>
+            <td class="p-2.5 font-bold text-slate-800">${item.scanned_id}</td>
+            <td class="p-2.5 text-center"><span class="${badgeColor} px-2 py-0.5 rounded text-[10px] font-sans">${item.result_status}</span></td>
+            <td class="p-2.5">${item.worker}</td>
+            <td class="p-2.5">${item.scanned_at}</td>
+            <td class="p-2.5 text-center">${item.method}</td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = html;
+    }
+
     function changePage(delta) {
       const target = currentPage + delta;
       if (target >= 1 && target <= totalPages) {
-        fetchTableData(target);
+        if (currentTab === 'defects') fetchTableData(target);
+        else fetchHistoryData(target);
       }
     }
 
@@ -410,196 +642,46 @@
       searchTimer = setTimeout(() => fetchTableData(1), 300);
     }
 
-    // 6. 단건 매칭 & 알람 모달
-    function sendMatchRequest(rawId, method = '수기') {
-      const cleanId = rawId.trim();
-      if (!cleanId) return;
-      const worker = document.getElementById('workerName').value.trim() || '익명';
-      socket.emit('match_defect', { targetId: cleanId, worker, method });
-    }
+    // 대용량 ID 업로드
+    async function uploadBulkData() {
+      const text = document.getElementById('bulkInput').value;
+      if (!text.trim()) return alert('등록할 ID를 입력하세요.');
+      const list = text.split(/[\n,\t\r]+/).map(s => s.trim()).filter(Boolean);
+      if (list.length === 0) return;
 
-    function handleManualSubmit() {
-      const input = document.getElementById('manualIdInput');
-      sendMatchRequest(input.value, '수기');
-      input.value = '';
-      input.focus();
-    }
+      const btn = document.getElementById('btnBulkUpload');
+      const progress = document.getElementById('uploadProgress');
+      btn.disabled = true;
+      progress.classList.remove('hidden');
 
-    document.getElementById('manualIdInput').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') handleManualSubmit();
-    });
-
-    function showAlertModal(id, worker, time) {
-      document.getElementById('modalId').textContent = id;
-      document.getElementById('modalWorker').textContent = worker;
-      document.getElementById('modalTime').textContent = time;
-      document.getElementById('alertModal').classList.remove('hidden');
-    }
-
-    function closeAlertModal() {
-      document.getElementById('alertModal').classList.add('hidden');
-    }
-
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
-        if (!document.getElementById('alertModal').classList.contains('hidden')) {
-          closeAlertModal();
+      try {
+        const res = await fetch('/api/upload-bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ list })
+        });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('bulkInput').value = '';
+          fetchTableData(1);
         }
+      } catch (err) {
+        alert('업로드 오류: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        progress.classList.add('hidden');
       }
-    });
+    }
 
     function clearAllData() {
-      if (confirm('DB에 저장된 모든 불량 목록과 진행 상태를 초기화할까요?')) {
+      if (confirm('DB의 모든 불량 목록과 스캔 이력을 초기화할까요?')) {
         socket.emit('clear_all');
       }
     }
 
-    // 7. 견고한 ZXing 바코드 스캐너 엔진 (순정 파이프라인)
-    function parseBarcodeData(rawText) {
-      const useSub = document.getElementById('useSubstring').checked;
-      if (!useSub) return rawText.trim();
-      const startIdx = parseInt(document.getElementById('subStart').value, 10) - 1;
-      const length = parseInt(document.getElementById('subLength').value, 10);
-      if (isNaN(startIdx) || isNaN(length) || startIdx < 0 || length <= 0) return rawText.trim();
-      return rawText.substr(startIdx, length).trim();
-    }
-
-    async function toggleScanner() {
-      const btn = document.getElementById('toggleScannerBtn');
-      const container = document.getElementById('videoContainer');
-      const statusBadge = document.getElementById('scanEngineStatus');
-
-      if (!isScanning) {
-        btn.textContent = '카메라 켜는 중...';
-        btn.disabled = true;
-
-        try {
-          if (!codeReader) {
-            // ZXing 기본 엔진: DMC, QR, Code128, Code39, EAN 등 모든 규격 자동 감지
-            codeReader = new ZXing.BrowserMultiFormatReader();
-          }
-
-          container.classList.remove('hidden');
-          statusBadge.textContent = '카메라 연결 중...';
-
-          // 장치 목록 검색
-          const videoDevices = await codeReader.listVideoInputDevices();
-          const camSelect = document.getElementById('camSelect');
-          camSelect.innerHTML = '';
-
-          let targetDeviceId = undefined;
-          if (videoDevices && videoDevices.length > 0) {
-            videoDevices.forEach((d, i) => {
-              const opt = document.createElement('option');
-              opt.value = d.deviceId;
-              opt.text = d.label || `카메라 ${i + 1}`;
-              camSelect.appendChild(opt);
-            });
-
-            // 후면/외장 카메라 우선
-            const backCam = videoDevices.find(d => 
-              d.label.toLowerCase().includes('back') || 
-              d.label.toLowerCase().includes('rear') || 
-              d.label.toLowerCase().includes('usb') ||
-              d.label.toLowerCase().includes('external')
-            );
-            targetDeviceId = backCam ? backCam.deviceId : videoDevices[0].deviceId;
-            camSelect.value = targetDeviceId;
-
-            if (videoDevices.length > 1) {
-              document.getElementById('camSelectContainer').classList.remove('hidden');
-            }
-          }
-
-          // [핵심] 1D 바코드 선명도를 위해 videoElement를 직접 지정하여 고속 디코딩 시작
-          const videoEl = document.getElementById('videoElement');
-
-          await codeReader.decodeFromVideoDevice(targetDeviceId, videoEl, (result, err) => {
-            if (result) {
-              const now = Date.now();
-              if (now - lastScanTime < SCAN_COOLDOWN_MS) return;
-              lastScanTime = now;
-
-              const rawText = result.getText();
-              document.getElementById('lastRawScan').textContent = rawText;
-              const parsedId = parseBarcodeData(rawText);
-              document.getElementById('lastParsedScan').textContent = parsedId;
-
-              statusBadge.textContent = `감지: ${result.getBarcodeFormat()}`;
-              statusBadge.className = 'absolute top-2 left-2 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded font-mono font-bold';
-
-              setTimeout(() => {
-                statusBadge.textContent = '감지 대기 중';
-                statusBadge.className = 'absolute top-2 left-2 text-[10px] bg-black/70 text-emerald-400 px-2 py-0.5 rounded font-mono';
-              }, 1000);
-
-              sendMatchRequest(parsedId, '카메라');
-            }
-          });
-
-          isScanning = true;
-          statusBadge.textContent = '감지 대기 중';
-          btn.textContent = '카메라 끄기';
-          btn.className = 'bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold';
-          addLog("📷 카메라 스캔이 정상 시작되었습니다. (DMC/QR/1D)", "text-slate-600");
-
-        } catch (err) {
-          console.error("Camera Error:", err);
-          alert('카메라 실행 실패: 웹캠 권한 허용 및 localhost 접속 여부를 확인하세요.\n' + err.message);
-          stopScannerUI();
-        } finally {
-          btn.disabled = false;
-        }
-      } else {
-        stopScannerUI();
-      }
-    }
-
-    function stopScannerUI() {
-      if (codeReader) {
-        codeReader.reset();
-      }
-      document.getElementById('toggleScannerBtn').textContent = '카메라 시작';
-      document.getElementById('toggleScannerBtn').className = 'bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold';
-      document.getElementById('videoContainer').classList.add('hidden');
-      isScanning = false;
-    }
-
-    async function changeCamera() {
-      if (!isScanning) return;
-      const deviceId = document.getElementById('camSelect').value;
-      if (codeReader) codeReader.reset();
-
-      const videoEl = document.getElementById('videoElement');
-      await codeReader.decodeFromVideoDevice(deviceId, videoEl, (result, err) => {
-        if (result) {
-          const now = Date.now();
-          if (now - lastScanTime < SCAN_COOLDOWN_MS) return;
-          lastScanTime = now;
-          const rawText = result.getText();
-          document.getElementById('lastRawScan').textContent = rawText;
-          const parsedId = parseBarcodeData(rawText);
-          document.getElementById('lastParsedScan').textContent = parsedId;
-          sendMatchRequest(parsedId, '카메라');
-        }
-      });
-    }
-
-    function toggleSubstringFields() {
-      document.getElementById('substringControls').classList.toggle('hidden', !document.getElementById('useSubstring').checked);
-    }
-
-    function addLog(message, colorClass = 'text-slate-700', time = null) {
-      const container = document.getElementById('logContainer');
-      const t = time || new Date().toLocaleTimeString('ko-KR');
-      const entry = document.createElement('div');
-      entry.className = `${colorClass} text-[11px]`;
-      entry.innerHTML = `<span class="text-slate-400">[${t}]</span> ${message}`;
-      container.prepend(entry);
-    }
-
     window.onload = () => {
       fetchTableData(1);
+      fetchHistoryCount();
     };
   </script>
 </body>
