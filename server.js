@@ -1,27 +1,26 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const server = http.createServer(app);
 
-// 대용량 등록 한도 확장 (50MB)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Socket.io 생성
 const io = new Server(server, {
   maxHttpBufferSize: 1e8,
   cors: { origin: '*' }
 });
 
-// 1. SQLite DB 초기화
-const db = new sqlite3.Database('./defects.db', (err) => {
+const DB_FILE = './defects.db';
+const db = new sqlite3.Database(DB_FILE, (err) => {
   if (err) console.error('DB 연결 실패:', err);
-  else console.log('📦 SQLite DB (defects.db) 연결 성공');
+  else console.log('📦 SQLite DB 연결 성공');
 });
 
 db.serialize(() => {
@@ -47,7 +46,42 @@ function getStatsAndSample(callback) {
   });
 }
 
-// 2. 대용량 일괄 등록 API (트랜잭션 고속 커밋)
+// -------------------------------------------------------------
+// 📥 [신규 추가] 1. SQLite DB 원본 파일 다운로드 API
+// -------------------------------------------------------------
+app.get('/api/download-db', (req, res) => {
+  const filePath = path.resolve(DB_FILE);
+  if (fs.existsSync(filePath)) {
+    const dateStr = new Date().toISOString().slice(0, 10);
+    res.download(filePath, `defects_backup_${dateStr}.db`, (err) => {
+      if (err) console.error('DB 다운로드 에러:', err);
+    });
+  } else {
+    res.status(404).send('DB 파일이 아직 생성되지 않았습니다.');
+  }
+});
+
+// -------------------------------------------------------------
+// 📥 [신규 추가] 2. 엑셀에서 바로 열리는 CSV 다운로드 API
+// -------------------------------------------------------------
+app.get('/api/download-csv', (req, res) => {
+  db.all('SELECT id, matched, worker, matched_at, method FROM defects ORDER BY matched DESC, id ASC', [], (err, rows) => {
+    if (err) return res.status(500).send('데이터 조회 오류');
+
+    let csvContent = '\uFEFF제품 ID,선별 상태,작업자,선별 시각,입력 방식\n';
+    rows.forEach(r => {
+      const statusText = r.matched === 1 ? '선별 완료' : '미선별(대기)';
+      csvContent += `"${r.id}","${statusText}","${r.worker}","${r.matched_at}","${r.method}"\n`;
+    });
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="defect_list_${dateStr}.csv"`);
+    res.send(csvContent);
+  });
+});
+
+// 대용량 등록 API
 app.post('/api/upload-bulk', (req, res) => {
   const idList = req.body.list;
   if (!idList || !Array.isArray(idList)) {
@@ -83,7 +117,7 @@ app.post('/api/upload-bulk', (req, res) => {
   });
 });
 
-// 3. 페이징 및 검색 API
+// 페이징 API
 app.get('/api/defects', (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 100;
@@ -108,7 +142,7 @@ app.get('/api/defects', (req, res) => {
   });
 });
 
-// 4. Socket.io 실시간 이벤트
+// Socket.io 이벤트
 io.on('connection', (socket) => {
   getStatsAndSample((total, completed) => {
     socket.emit('stats_updated', { total, completed });
@@ -174,7 +208,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// Render 클라우드 환경 변수 PORT 바인딩 (기본값 3000)
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Render 클라우드 서버 가동 완료 (Port: ${PORT})`);
